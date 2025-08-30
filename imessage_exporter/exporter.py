@@ -2,7 +2,7 @@
 """
 Core export logic for imessage-cli.
 
-- Finds all 1:1 chats for a given phone number (merging SMS/iMessage threads).
+- Finds all 1:1 chats for given handles (phone numbers or email addresses), merging SMS/iMessage threads.
 - Reads in read-only mode.
 - Drops tapbacks (associated_message_type 2000..2006), keeps replies/threads.
 - Decodes 'attributedBody' blobs (Sequoia) with a heuristic filter to get human text.
@@ -91,25 +91,47 @@ def _clean_text(t: str) -> str:
     t = re.sub(r"\s{2,}", " ", t).strip()
     return t
 
-def _guess_other_label(other_label: Optional[str], phone: str) -> str:
+def _guess_other_label(other_label: Optional[str], handles: Iterable[str]) -> str:
     if other_label:
         return other_label
-    d = _clean_digits(phone)
-    return f"+{d[-10:-7]}-{d[-7:-4]}-{d[-4:]}" if len(d) >= 10 else phone
+    first = next(iter(handles))
+    if "@" in first:
+        return first.split("@", 1)[0]
+    d = _clean_digits(first)
+    return f"+{d[-10:-7]}-{d[-7:-4]}-{d[-4:]}" if len(d) >= 10 else first
 
-def _find_1to1_chat_ids(conn, digits: str) -> List[int]:
-    q = """
-    SELECT c.rowid
-    FROM chat c
-    JOIN chat_handle_join chj ON chj.chat_id = c.rowid
-    JOIN handle h ON h.rowid = chj.handle_id
-    WHERE REPLACE(REPLACE(REPLACE(h.id,'+',''),'-',''),' ','') LIKE ?
-    GROUP BY c.rowid
-    HAVING COUNT(DISTINCT chj.handle_id) = 1
-    """
+def _find_chat_ids_for_handle(conn, handle: str) -> List[int]:
     cur = conn.cursor()
-    cur.execute(q, (f"%{digits}%",))
+    if "@" in handle:
+        q = """
+        SELECT c.rowid
+        FROM chat c
+        JOIN chat_handle_join chj ON chj.chat_id = c.rowid
+        JOIN handle h ON h.rowid = chj.handle_id
+        WHERE LOWER(h.id) = LOWER(?)
+        GROUP BY c.rowid
+        HAVING COUNT(DISTINCT chj.handle_id) = 1
+        """
+        cur.execute(q, (handle.lower(),))
+    else:
+        digits = _clean_digits(handle)
+        q = """
+        SELECT c.rowid
+        FROM chat c
+        JOIN chat_handle_join chj ON chj.chat_id = c.rowid
+        JOIN handle h ON h.rowid = chj.handle_id
+        WHERE REPLACE(REPLACE(REPLACE(h.id,'+',''),'-',''),' ','') LIKE ?
+        GROUP BY c.rowid
+        HAVING COUNT(DISTINCT chj.handle_id) = 1
+        """
+        cur.execute(q, (f"%{digits}%",))
     return [r[0] for r in cur.fetchall()]
+
+def _find_chat_ids_for_handles(conn, handles: Iterable[str]) -> List[int]:
+    ids = set()
+    for h in handles:
+        ids.update(_find_chat_ids_for_handle(conn, h))
+    return sorted(ids)
 
 def _fetch_messages(conn, chat_ids, keep_replies=True, drop_tapbacks=True,
                     since: Optional[str]=None, until: Optional[str]=None):
@@ -134,9 +156,11 @@ def _fetch_messages(conn, chat_ids, keep_replies=True, drop_tapbacks=True,
 
     where = " AND ".join(conds)
     q = f"""
-    SELECT m.rowid, m.date, m.is_from_me, m.text, m.attributedBody
+    SELECT DISTINCT m.rowid, m.date, m.is_from_me, m.text, m.attributedBody, h.id AS handle_id
     FROM message m
     JOIN chat_message_join cmj ON cmj.message_id = m.rowid
+    JOIN chat_handle_join chj ON chj.chat_id = cmj.chat_id
+    JOIN handle h ON h.rowid = chj.handle_id
     WHERE {where}
     ORDER BY m.date ASC
     """
@@ -151,7 +175,7 @@ def default_output_path(other_label_or_phone: str, as_txt: bool = False) -> path
     return desk / f"{safe}_iMessage_Transcript_{date}{suffix}"
 
 def export_conversation(
-    phone: str,
+    handles: Iterable[str],
     me_label: str = "Me",
     other_label: Optional[str] = None,
     output_path: str = "",
@@ -166,15 +190,14 @@ def export_conversation(
     conn = _connect_readonly(DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    digits = _clean_digits(phone)
-    chat_ids = _find_1to1_chat_ids(conn, digits)
+    chat_ids = _find_chat_ids_for_handles(conn, handles)
     if not chat_ids:
-        raise RuntimeError("No matching 1:1 chat found for that number.")
+        raise RuntimeError("No matching 1:1 chat found for those handles.")
 
     rows = _fetch_messages(conn, chat_ids, keep_replies=True, drop_tapbacks=True,
                            since=since, until=until)
 
-    other_label = _guess_other_label(other_label, phone)
+    other_label = _guess_other_label(other_label, handles)
     out_path = pathlib.Path(output_path) if output_path else default_output_path(other_label, as_txt=not as_markdown)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -190,8 +213,13 @@ def export_conversation(
 
     msg_count = 0
     att_count = 0
+    current_handle = None
 
     for m in rows:
+        handle_id = m["handle_id"]
+        if handle_id != current_handle:
+            lines.append(f"--- via {handle_id} ---")
+            current_handle = handle_id
         body = m["text"] or _from_attributed(m["attributedBody"]) or ""
         body = _clean_text(body)
         who = me_label if m["is_from_me"] == 1 else other_label

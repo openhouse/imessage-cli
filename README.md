@@ -1,8 +1,8 @@
 # imessage-cli
 
-Export a **diarized** text/Markdown transcript of your 1‑to‑1 iMessage/SMS conversation with any phone number on **macOS**.
+Export a **diarized** text/Markdown transcript of your 1‑to‑1 iMessage/SMS conversation with any phone number or email address on **macOS**.
 
-- Merges multiple threads for the same number (e.g., SMS vs. iMessage).
+- Merges multiple threads for the same person across numbers and email addresses.
 - Drops tapbacks 👍❤️ but **keeps replies/threads**.
 - Recovers text stored in `attributedBody` (macOS Sequoia and later).
 - Lists attachments inline (filenames), with optional copying of files.
@@ -30,6 +30,9 @@ chmod +x imx
 ```bash
 # Basic: export whole history with +1-443-204-2987
 ./imx +14432042987
+
+# Merge across phone and email handles
+./imx +14432042987 user@example.com
 
 # Set labels
 ./imx +14432042987 --me "Jamie" --name "Sarah"
