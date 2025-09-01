@@ -7,6 +7,7 @@ Export a **diarized** text/Markdown transcript of your 1‑to‑1 iMessage/SMS c
 - Recovers text stored in `attributedBody` (macOS Sequoia and later).
 - Lists attachments inline (filenames), with optional copying of files.
 - Outputs Markdown (`.md`) by default (or plain `.txt`).
+For pipelines, the `--jsonl` flag emits a stable JSON Lines stream which can be loaded into SQLite with `sqlite-utils` and explored using Datasette.
 
 > Example of the output format (attachments listed inline):  
 > `2025-05-25 19:21 — Jamie:  [attachments: flowers-apng.PNG]` :contentReference[oaicite:0]{index=0}
