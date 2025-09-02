@@ -104,7 +104,7 @@ def test_merge_view(tmp_path):
     )
     log.append_event(delete)
 
-    conv = list(get_conversation(person))
+    conv = list(get_conversation(person, group_by_conversation=False))
     assert len(conv) == 2
     assert conv[0]["tombstone"]["reason"] == "deleted"
     assert conv[0]["reactions"] == ["👍"]
@@ -153,5 +153,5 @@ def test_stable_ordering_same_time(tmp_path):
     )
     log.append_event(second)
 
-    conv = list(get_conversation(person))
+    conv = list(get_conversation(person, group_by_conversation=False))
     assert [c["text"] for c in conv] == ["first", "second"]
