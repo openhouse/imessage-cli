@@ -47,6 +47,12 @@ class SQLiteEventStore:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_person_time ON events(person_did, time_event)"
         )
+        try:
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conv_time ON events(json_extract(body_json, '$.rel.conversation_id'), time_event)"
+            )
+        except sqlite3.OperationalError:
+            pass
         self.conn.commit()
 
     def append(self, event: BaseEvent) -> None:

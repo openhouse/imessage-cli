@@ -10,5 +10,9 @@ This MVP stores events from local connectors (iMessage and email) in an append-o
 
 ## Usage
 ```
-python -m unified.cli.unify --person "<handle>" --jsonl
+# List chats for a person
+python -m unified.cli.unify --person "<did or handle>" --list-chats
+
+# Render a chat to markdown
+python -m unified.cli.unify --person "<did or handle>" --chat "<conversation_id>" --show-handles --out thread.md
 ```
