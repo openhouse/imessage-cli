@@ -16,3 +16,16 @@ python -m unified.cli.unify --person "<did or handle>" --list-chats
 # Render a chat to markdown
 python -m unified.cli.unify --person "<did or handle>" --chat "<conversation_id>" --show-handles --out thread.md
 ```
+
+### Voice view
+
+Extract a person's authored lines across rooms with surrounding context:
+
+```
+python -m unified.cli.unify --voice-of lindseyagriffith@gmail.com --context 2 --out voice-lindsey.md
+python -m unified.cli.unify --voice-of +13169921361 --quotes-only
+```
+
+`--context` controls how many neighboring messages to include on either side of
+each authored line. `--quotes-only` lists only the target's messages while
+keeping room headers for orientation.

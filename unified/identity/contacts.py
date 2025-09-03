@@ -6,9 +6,16 @@ import os
 import platform
 import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Callable, Dict, Iterable, Optional, Set, Tuple
+import unicodedata
 
 PEOPLE_PATH = Path.home() / ".imx/unified/people.json"
+
+# Default contact sources used when expand_handles() is invoked without explicit
+# paths. The CLI can set these prior to calling renderers to make the lookup
+# deterministic for the lifetime of the process.
+DEFAULT_VCF: Optional[Path] = None
+DEFAULT_CSV: Optional[Path] = None
 
 def _load_people() -> Dict[str, Dict[str, object]]:
     if PEOPLE_PATH.exists():
@@ -114,3 +121,83 @@ def build_resolver(contacts_vcf: Optional[Path] = None, contacts_csv: Optional[P
         return fallback_display or handle
 
     return resolve
+
+
+def strip_controls_for_handles(s: str) -> str:
+    """Remove zero-width and bidi control characters for handle parsing."""
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Cf")
+
+
+def normalize_handle_for_matching(h: str) -> str:
+    """Canonicalize emails and phone numbers for matching."""
+    if not h:
+        return ""
+    h = strip_controls_for_handles(h.strip())
+    if "@" in h or h.lower().startswith("mailto:"):
+        addr = h.split(":", 1)[1] if h.lower().startswith("mailto:") else h
+        return f"mailto:{addr.lower()}"
+    plus = "+" if h.startswith("+") else ""
+    digits = "".join(ch for ch in h if ch.isdigit())
+    if plus:
+        digits = "+" + digits
+    else:
+        if len(digits) == 10:
+            digits = "+1" + digits
+        elif digits:
+            digits = "+" + digits
+    return f"tel:{digits}"
+
+
+def _save_people(data: Dict[str, Dict[str, object]]) -> None:
+    PEOPLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PEOPLE_PATH.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def expand_handles(seed: str, vcf: Optional[Path] = None, csv: Optional[Path] = None) -> Tuple[str, Set[str], str]:
+    """Resolve a seed handle/label to a display name and set of handles."""
+    vcf = vcf or DEFAULT_VCF
+    csv = csv or DEFAULT_CSV
+    people = _load_people()
+    seed_norm = normalize_handle_for_matching(seed)
+    # Step 1: people.json lookup
+    for label, info in people.items():
+        handles = {normalize_handle_for_matching(h) for h in info.get("handles", [])}
+        if seed_norm in handles or seed.lower() == label.lower() or seed.lower() == str(info.get("label", "")).lower():
+            return info.get("label", label), handles, "people.json"
+    # Step 2: external contacts
+    by_name: Dict[str, Set[str]] = {}
+    if vcf:
+        for h, name in load_vcf(vcf).items():
+            by_name.setdefault(name, set()).add(normalize_handle_for_matching(h))
+    if csv:
+        for h, name in load_csv(csv).items():
+            by_name.setdefault(name, set()).add(normalize_handle_for_matching(h))
+    for name, handles in by_name.items():
+        if seed_norm in handles:
+            _update = people.get(name, {"label": name, "handles": []})
+            existing = {normalize_handle_for_matching(h) for h in _update.get("handles", [])}
+            existing.update(handles)
+            _update["handles"] = sorted(existing)
+            people[name] = _update
+            _save_people(people)
+            return name, existing, "contacts"
+    # Step 3: macOS Contacts
+    mac = query_macos_contacts(seed)
+    if mac:
+        handles = {seed_norm}
+        _update = people.get(mac, {"label": mac, "handles": []})
+        existing = {normalize_handle_for_matching(h) for h in _update.get("handles", [])}
+        existing.update(handles)
+        _update["handles"] = sorted(existing)
+        people[mac] = _update
+        _save_people(people)
+        return mac, existing, "macos"
+    # Fallback: seed only
+    handles = {seed_norm}
+    _update = people.get(seed, {"label": seed, "handles": []})
+    existing = {normalize_handle_for_matching(h) for h in _update.get("handles", [])}
+    existing.update(handles)
+    _update["handles"] = sorted(existing)
+    people[seed] = _update
+    _save_people(people)
+    return seed, existing, "seed"
