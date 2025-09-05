@@ -8,6 +8,11 @@ from ..identity import contacts
 from ..identity.contacts import build_resolver, expand_handles
 from ..views.conversation import get_conversation, list_chats, render_markdown
 from ..views.voice import render_voice_manuscript
+from .person_resolver import (
+    db_persons,
+    guess_person_from_voice,
+    print_persons_summary,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -29,6 +34,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--voice-of")
     parser.add_argument("--context", type=int, default=2)
     parser.add_argument("--quotes-only", action="store_true", default=False)
+    parser.add_argument(
+        "--list-persons",
+        action="store_true",
+        help="List local persons discovered in the event log and exit",
+    )
+    parser.add_argument(
+        "--auto-person",
+        action="store_true",
+        help="If --person is omitted, try to auto-select using --voice-of (unique match)",
+    )
     args = parser.parse_args(argv)
     def resolve_person() -> str:
         if args.person:
@@ -36,18 +51,29 @@ def main(argv: list[str] | None = None) -> None:
             if person.startswith("did:"):
                 return person
             from ..identity import did as did_module  # heavy import only when needed
+
             if "@" in person or person.startswith("+"):
                 return did_module.resolve_handles_to_person([person])
             reg = did_module._load_registry()  # type: ignore[attr-defined]
             return next((d for d, info in reg.items() if info.get("label") == person), person)
-        from ..storage_sqlite import SQLiteEventStore
-        store = SQLiteEventStore()
-        cur = store.conn.cursor()
-        cur.execute("SELECT DISTINCT person_did FROM events")
-        rows = [r[0] for r in cur.fetchall()]
-        if len(rows) == 1:
-            return rows[0]
-        raise SystemExit("--person required (multiple persons found)")
+        persons = db_persons()
+        if args.list_persons:
+            print_persons_summary()
+            raise SystemExit(0)
+        if len(persons) == 1:
+            return persons[0]
+        if args.auto_person and args.voice_of:
+            auto, evidence = guess_person_from_voice(args.voice_of)
+            if auto:
+                print(f"Auto-selected person_did: {auto} (via --voice-of evidence)")
+                return auto
+        print("--person required (multiple persons found).")
+        print_persons_summary()
+        if args.voice_of and not args.auto_person:
+            print(
+                "\nHint: re-run with --auto-person (will select the unique match by --voice-of if possible)."
+            )
+        raise SystemExit(2)
 
     person_did = resolve_person()
     since = datetime.fromisoformat(args.since) if args.since else None
