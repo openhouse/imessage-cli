@@ -29,3 +29,19 @@ python -m unified.cli.unify --voice-of +13169921361 --quotes-only
 `--context` controls how many neighboring messages to include on either side of
 each authored line. `--quotes-only` lists only the target's messages while
 keeping room headers for orientation.
+
+### Choosing a person
+
+The repository's `imx` helper script runs the `unify` CLI directly, so no subcommand is needed.
+
+If your event log contains multiple local identities (multiple `person_did`s):
+
+```bash
+# List all persons with counts, date range, and services
+imx --list-persons
+
+# Let the CLI pick the person automatically when --voice-of uniquely identifies one
+imx --auto-person --voice-of someone@example.com --context 2
+```
+
+If ambiguous, the CLI prints a summary and asks you to pass `--person`.
